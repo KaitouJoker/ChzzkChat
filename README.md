@@ -22,22 +22,25 @@
 
 ---
 
-## 🚀 설치 방법 (Conda 환경 권장)
+## 🚀 설치 방법 (Python 3.14+ 및 Conda 권장)
+
+이 프로젝트는 최신 **Python 3.14+** 환경에 완벽하게 호환되도록 최적화되어 있습니다.
 
 ```bash
 # 1. 코드 다운로드 (Clone)
 git clone https://github.com/KaitouJoker/ChzzkChat.git
 cd ChzzkChat
 
-# 2. Conda 가상환경 생성 및 활성화
-conda create -n chzzk python=3.10 -y
+# 2. Python 3.14 Conda 가상환경 생성 및 활성화
+conda create -n chzzk python=3.14 -y
 conda activate chzzk
 
 # 3. 필수 패키지 설치
 pip install -r requirements.txt
 ```
 
-*(참고: venv를 사용하실 경우 `python -m venv venv` 후 `venv\Scripts\activate`로 활성화하셔도 됩니다.)*
+*(참고: Python 3.9 ~ 3.14+ 모든 파이썬 버전을 지원하며, venv 환경을 사용하셔도 무방합니다.)*
+
 
 ---
 

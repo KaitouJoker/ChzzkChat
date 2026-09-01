@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+from typing import Any
 from websocket import WebSocket
 
 import api
@@ -14,8 +15,8 @@ from cmd_type import CHZZK_CHAT_CMD
 class CsvChatLogger:
     """채팅 및 후원 내역을 CSV 파일에 실시간으로 누적(Append) 저장하는 클래스입니다."""
 
-    def __init__(self, filepath='chat.csv'):
-        self.filepath = filepath
+    def __init__(self, filepath: str = 'chat.csv') -> None:
+        self.filepath: str = filepath
         file_exists = os.path.exists(filepath) and os.path.getsize(filepath) > 0
 
         # 엑셀 호환을 위해 utf-8-sig 인코딩 사용
@@ -35,7 +36,17 @@ class CsvChatLogger:
             ])
             self.file.flush()
 
-    def write_chat(self, dt_str, timestamp_ms, streamer_id, channel_name, chat_type, user_id, nickname, message):
+    def write_chat(
+        self,
+        dt_str: str,
+        timestamp_ms: int,
+        streamer_id: str,
+        channel_name: str,
+        chat_type: str,
+        user_id: str,
+        nickname: str,
+        message: str
+    ) -> None:
         self.writer.writerow([
             dt_str,
             timestamp_ms,
@@ -48,31 +59,38 @@ class CsvChatLogger:
         ])
         self.file.flush()
 
-    def close(self):
+    def close(self) -> None:
         if self.file and not self.file.closed:
             self.file.close()
 
 
 class ChzzkChat:
 
-    def __init__(self, streamer, cookies, logger, csv_logger, check_interval=20):
-        self.streamer = streamer
-        self.cookies = cookies
-        self.logger = logger
-        self.csv_logger = csv_logger
-        self.check_interval = check_interval
+    def __init__(
+        self,
+        streamer: str,
+        cookies: dict[str, Any],
+        logger: logging.Logger,
+        csv_logger: CsvChatLogger,
+        check_interval: int = 20
+    ) -> None:
+        self.streamer: str = streamer
+        self.cookies: dict[str, Any] = cookies
+        self.logger: logging.Logger = logger
+        self.csv_logger: CsvChatLogger = csv_logger
+        self.check_interval: int = check_interval
 
-        self.sid = None
-        self.sock = None
-        self.chatChannelId = None
-        self.channelName = None
-        self.userIdHash = None
-        self.accessToken = None
-        self.extraToken = None
+        self.sid: str | None = None
+        self.sock: WebSocket | None = None
+        self.chatChannelId: str | None = None
+        self.channelName: str = streamer
+        self.userIdHash: str = ""
+        self.accessToken: str | None = None
+        self.extraToken: str | None = None
 
         self._init_account_info()
 
-    def _init_account_info(self):
+    def _init_account_info(self) -> None:
         try:
             self.channelName = api.fetch_channelName(self.streamer)
         except Exception as e:
@@ -85,7 +103,7 @@ class ChzzkChat:
             self.logger.warning(f"유저 상태(userIdHash) 조회 실패: {e}")
             self.userIdHash = ""
 
-    def connect(self, chat_channel_id):
+    def connect(self, chat_channel_id: str) -> None:
         self.chatChannelId = chat_channel_id
         self.accessToken, self.extraToken = api.fetch_accessToken(self.chatChannelId, self.cookies)
 
@@ -93,13 +111,13 @@ class ChzzkChat:
         sock.connect('wss://kr-ss1.chat.naver.com/chat')
         self.logger.info(f"[{self.channelName}] 채팅 서버에 연결 중...")
 
-        default_dict = {
+        default_dict: dict[str, Any] = {
             "ver": "2",
             "svcid": "game",
             "cid": self.chatChannelId,
         }
 
-        send_dict = {
+        send_dict: dict[str, Any] = {
             "cmd": CHZZK_CHAT_CMD['connect'],
             "tid": 1,
             "bdy": {
@@ -132,7 +150,7 @@ class ChzzkChat:
         else:
             raise ConnectionError("채팅 서버 연결 실패")
 
-    def close_socket(self):
+    def close_socket(self) -> None:
         if self.sock:
             try:
                 self.sock.close()
@@ -140,12 +158,12 @@ class ChzzkChat:
                 pass
             self.sock = None
 
-    def send(self, message: str):
+    def send(self, message: str) -> None:
         if not self.sock or not self.sock.connected:
             self.logger.warning("채팅 서버에 연결되어 있지 않아 메시지를 전송할 수 없습니다.")
             return
 
-        default_dict = {
+        default_dict: dict[str, Any] = {
             "ver": 2,
             "svcid": "game",
             "cid": self.chatChannelId,
@@ -159,7 +177,7 @@ class ChzzkChat:
             "streamingChannelId": self.chatChannelId
         }
 
-        send_dict = {
+        send_dict: dict[str, Any] = {
             "tid": 3,
             "cmd": CHZZK_CHAT_CMD['send_chat'],
             "retry": False,
@@ -174,7 +192,7 @@ class ChzzkChat:
 
         self.sock.send(json.dumps(dict(send_dict, **default_dict)))
 
-    def run(self):
+    def run(self) -> None:
         self.logger.info(f"[{self.channelName}] 무중단 채팅 수집기를 시작합니다.")
 
         while True:
@@ -222,15 +240,15 @@ class ChzzkChat:
                 self.close_socket()
                 time.sleep(5)
 
-    def _listen_loop(self):
+    def _listen_loop(self) -> None:
         while self.sock and self.sock.connected:
             try:
                 raw_message = self.sock.recv()
                 if not raw_message:
                     break
 
-                raw_message = json.loads(raw_message)
-                chat_cmd = raw_message.get('cmd')
+                raw_message_json: dict[str, Any] = json.loads(raw_message)
+                chat_cmd = raw_message_json.get('cmd')
 
                 if chat_cmd == CHZZK_CHAT_CMD['ping']:
                     self.sock.send(
@@ -248,13 +266,13 @@ class ChzzkChat:
                 else:
                     continue
 
-                for chat_data in raw_message.get('bdy', []):
+                for chat_data in raw_message_json.get('bdy', []):
                     user_id = chat_data.get('uid', '')
                     if user_id == 'anonymous':
                         nickname = '익명의 후원자'
                     else:
                         try:
-                            profile_data = json.loads(chat_data.get('profile', '{}'))
+                            profile_data: dict[str, Any] = json.loads(chat_data.get('profile', '{}'))
                             nickname = profile_data.get('nickname', '알 수 없음')
                         except Exception:
                             nickname = '알 수 없음'
@@ -291,7 +309,7 @@ class ChzzkChat:
         self.close_socket()
 
 
-def get_logger(log_path='chat.log'):
+def get_logger(log_path: str = 'chat.log') -> logging.Logger:
     formatter = logging.Formatter('%(message)s')
 
     logger = logging.getLogger()
@@ -309,9 +327,9 @@ def get_logger(log_path='chat.log'):
     return logger
 
 
-def load_config(config_path='config.json'):
+def load_config(config_path: str = 'config.json') -> dict[str, Any]:
     """설정 파일(config.json)을 로드하며, 파일이 없거나 오류 발생 시 기본값을 반환합니다."""
-    default_config = {
+    default_config: dict[str, Any] = {
         'streamer_id': '9381e7d6816e6d915a44a13c0195b202',
         'output_csv': 'chat.csv',
         'output_log': 'chat.log',
@@ -338,7 +356,7 @@ if __name__ == '__main__':
 
     # 2. 메인 파서 생성 (config.json의 값을 기본값으로 반영)
     parser = argparse.ArgumentParser(
-        description="Chzzk Chat & Donation Crawler",
+        description="Chzzk Chat & Donation Crawler (Python 3.14+ Compatible)",
         parents=[pre_parser]
     )
     parser.add_argument(
@@ -367,7 +385,7 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
-    cookies = {}
+    cookies: dict[str, Any] = {}
     if os.path.exists('cookies.json'):
         try:
             with open('cookies.json', encoding='utf-8-sig') as f:
@@ -389,5 +407,6 @@ if __name__ == '__main__':
         chzzkchat.run()
     finally:
         csv_logger.close()
+
 
 
