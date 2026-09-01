@@ -1,13 +1,9 @@
 ﻿@echo off
+setlocal
 chcp 65001 >nul
 title Chzzk Chat Crawler
 
-echo ========================================================
-echo   Chzzk Chat Crawler - 치지직 채팅 크롤러
-echo ========================================================
-echo.
-
-:: Conda 환경 활성화 시도
+:: Conda 환경 활성화
 where conda >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
     call conda activate chzzk 2>nul
@@ -24,6 +20,15 @@ if %ERRORLEVEL% EQU 0 (
         call "%PROGRAMDATA%\miniconda3\Scripts\activate.bat" chzzk 2>nul
     )
 )
+
+:: activate.bat 호출 후 echo가 켜지는 현상 방지 및 화면 정리
+@echo off
+cls
+
+echo ========================================================
+echo   Chzzk Chat Crawler - 치지직 채팅 크롤러
+echo ========================================================
+echo.
 
 :: Python 실행 (인자가 있으면 그대로 전달)
 python run.py %*

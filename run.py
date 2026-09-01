@@ -64,6 +64,11 @@ class CsvChatLogger:
             self.file.close()
 
 
+def _now_str() -> str:
+    """현재 시간을 'YYYY-MM-DD HH:MM:SS' 형식의 문자열로 반환합니다."""
+    return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
 class ChzzkChat:
 
     def __init__(
@@ -94,13 +99,13 @@ class ChzzkChat:
         try:
             self.channelName = api.fetch_channelName(self.streamer)
         except Exception as e:
-            self.logger.warning(f"채널명 조회 실패: {e}")
+            self.logger.warning(f"[{_now_str()}][{self.streamer}] 채널명 조회 실패: {e}")
             self.channelName = self.streamer
 
         try:
             self.userIdHash = api.fetch_userIdHash(self.cookies)
         except Exception as e:
-            self.logger.warning(f"유저 상태(userIdHash) 조회 실패: {e}")
+            self.logger.warning(f"[{_now_str()}][{self.channelName}] 유저 상태(userIdHash) 조회 실패: {e}")
             self.userIdHash = ""
 
     def connect(self, chat_channel_id: str) -> None:
@@ -109,7 +114,7 @@ class ChzzkChat:
 
         sock = WebSocket()
         sock.connect('wss://kr-ss1.chat.naver.com/chat')
-        self.logger.info(f"[{self.channelName}] 채팅 서버에 연결 중...")
+        self.logger.info(f"[{_now_str()}][{self.channelName}] 채팅 서버에 연결 중...")
 
         default_dict: dict[str, Any] = {
             "ver": "2",
@@ -146,7 +151,7 @@ class ChzzkChat:
 
         self.sock = sock
         if self.sock.connected:
-            self.logger.info(f"[{self.channelName}] 채팅창 연결 완료 (채팅 채널 ID: {self.chatChannelId})")
+            self.logger.info(f"[{_now_str()}][{self.channelName}] 채팅창 연결 완료 (채팅 채널 ID: {self.chatChannelId})")
         else:
             raise ConnectionError("채팅 서버 연결 실패")
 
@@ -160,7 +165,7 @@ class ChzzkChat:
 
     def send(self, message: str) -> None:
         if not self.sock or not self.sock.connected:
-            self.logger.warning("채팅 서버에 연결되어 있지 않아 메시지를 전송할 수 없습니다.")
+            self.logger.warning(f"[{_now_str()}][{self.channelName}] 채팅 서버에 연결되어 있지 않아 메시지를 전송할 수 없습니다.")
             return
 
         default_dict: dict[str, Any] = {
@@ -193,7 +198,7 @@ class ChzzkChat:
         self.sock.send(json.dumps(dict(send_dict, **default_dict)))
 
     def run(self) -> None:
-        self.logger.info(f"[{self.channelName}] 무중단 채팅 수집기를 시작합니다.")
+        self.logger.info(f"[{_now_str()}][{self.channelName}] 무중단 채팅 수집기를 시작합니다.")
 
         while True:
             try:
@@ -201,7 +206,7 @@ class ChzzkChat:
                 try:
                     live_status = api.fetch_live_status(self.streamer, self.cookies)
                 except Exception as e:
-                    self.logger.warning(f"방송 상태 조회 중 오류 발생 ({e}). {self.check_interval}초 후 재시도합니다.")
+                    self.logger.warning(f"[{_now_str()}][{self.channelName}] 방송 상태 조회 중 오류 발생 ({e}). {self.check_interval}초 후 재시도합니다.")
                     time.sleep(self.check_interval)
                     continue
 
@@ -210,7 +215,7 @@ class ChzzkChat:
 
                 if not is_live or not chat_channel_id:
                     self.logger.info(
-                        f"[{self.channelName}] 현재 방송이 꺼져 있습니다 (상태: {live_status.get('status', 'CLOSE')}). "
+                        f"[{_now_str()}][{self.channelName}] 현재 방송이 꺼져 있습니다 (상태: {live_status.get('status', 'CLOSE')}). "
                         f"{self.check_interval}초 후 방송 시작 여부를 확인합니다..."
                     )
                     time.sleep(self.check_interval)
@@ -218,12 +223,12 @@ class ChzzkChat:
 
                 # 2. 방송 중인 경우 연결
                 title = live_status.get('liveTitle', '')
-                self.logger.info(f"[{self.channelName}] 방송 감지됨 - 제목: '{title}', 채팅 채널 ID: {chat_channel_id}")
+                self.logger.info(f"[{_now_str()}][{self.channelName}] 방송 감지됨 - 제목: '{title}', 채팅 채널 ID: {chat_channel_id}")
 
                 try:
                     self.connect(chat_channel_id)
                 except Exception as e:
-                    self.logger.error(f"채팅 서버 접속 실패 ({e}). 5초 후 재시도합니다.")
+                    self.logger.error(f"[{_now_str()}][{self.channelName}] 채팅 서버 접속 실패 ({e}). 5초 후 재시도합니다.")
                     self.close_socket()
                     time.sleep(5)
                     continue
@@ -232,11 +237,11 @@ class ChzzkChat:
                 self._listen_loop()
 
             except KeyboardInterrupt:
-                self.logger.info("프로그램 종료 요청을 받았습니다.")
+                self.logger.info(f"[{_now_str()}] 프로그램 종료 요청을 받았습니다.")
                 self.close_socket()
                 break
             except Exception as e:
-                self.logger.error(f"예기치 못한 오류 발생: {e}. 5초 후 재시도합니다.")
+                self.logger.error(f"[{_now_str()}] 예기치 못한 오류 발생: {e}. 5초 후 재시도합니다.")
                 self.close_socket()
                 time.sleep(5)
 
@@ -303,10 +308,11 @@ class ChzzkChat:
             except KeyboardInterrupt:
                 raise
             except Exception as e:
-                self.logger.warning(f"메시지 수신 중 끊김 발생 ({e}). 재연결을 시도합니다.")
+                self.logger.warning(f"[{_now_str()}] 메시지 수신 중 끊김 발생 ({e}). 재연결을 시도합니다.")
                 break
 
         self.close_socket()
+
 
 
 def get_logger(log_path: str = 'chat.log') -> logging.Logger:
