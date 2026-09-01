@@ -22,23 +22,22 @@
 
 ---
 
-## 🚀 설치 방법
+## 🚀 설치 방법 (Conda 환경 권장)
 
 ```bash
 # 1. 코드 다운로드 (Clone)
 git clone https://github.com/KaitouJoker/ChzzkChat.git
 cd ChzzkChat
 
-# 2. 가상환경 생성 및 활성화 (선택 사항)
-python -m venv venv
-# Windows:
-venv\Scripts\activate
-# Linux/macOS:
-source venv/bin/activate
+# 2. Conda 가상환경 생성 및 활성화
+conda create -n chzzk python=3.10 -y
+conda activate chzzk
 
 # 3. 필수 패키지 설치
 pip install -r requirements.txt
 ```
+
+*(참고: venv를 사용하실 경우 `python -m venv venv` 후 `venv\Scripts\activate`로 활성화하셔도 됩니다.)*
 
 ---
 
@@ -81,21 +80,26 @@ pip install -r requirements.txt
 
 ## 💻 사용 방법
 
+### 방법 1. 원클릭 실행 (Windows 배치 파일)
+- 탐색기에서 **[`run.bat`](file:///d:/programming%20language/pythun/Github/ChzzkChat/run.bat)** 파일을 더블 클릭하면 자동으로 `chzzk` Conda 환경을 활성화하고 크롤러를 실행합니다.
+
+### 방법 2. 콘솔/터미널에서 실행
 ```bash
-# 1. 기본 실행 (config.json 설정값 기반으로 바로 시작)
+# 기본 실행 (config.json 설정값 기반으로 시작)
 python run.py
 
-# 2. 특정 스트리머 ID를 커맨드라인에서 바로 지정하여 실행
+# 특정 스트리머 ID를 커맨드라인에서 바로 지정하여 실행
 python run.py --streamer_id 9381e7d6816e6d915a44a13c0195b202
 
-# 3. 다른 설정 파일을 지정하여 실행
+# 다른 설정 파일을 지정하여 실행
 python run.py --config my_config.json
 
-# 4. 저장 파일명 및 확인 주기 임시 변경
+# 저장 파일명 및 확인 주기 임시 변경
 python run.py --output_csv custom_chat.csv --check_interval 30
 ```
 
-> 💡 작동을 중지하려면 터미널에서 `Ctrl + C`를 누르시면 안전하게 연결을 닫고 종료됩니다.
+> 💡 작동을 중지하려면 터미널 창에서 `Ctrl + C`를 누르시면 안전하게 연결을 닫고 종료됩니다.
+
 
 ---
 
