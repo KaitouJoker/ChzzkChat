@@ -1,6 +1,7 @@
-﻿{
+{
     "streamer_id": "9381e7d6816e6d915a44a13c0195b202",
-    "output_csv": "chat.csv",
+    "output_dir": "csv",
     "output_log": "chat.log",
     "check_interval": 20
 }
+

@@ -4,6 +4,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import time
 from typing import Any
 from websocket import WebSocket
@@ -12,12 +13,27 @@ import api
 from cmd_type import CHZZK_CHAT_CMD
 
 
+def _now_str() -> str:
+    """현재 시간을 'YYYY-MM-DD HH:MM:SS' 형식의 문자열로 반환합니다."""
+    return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _sanitize_filename(name: str) -> str:
+    """파일명에 사용할 수 없는 특수문자를 언더스코어(_)로 치환합니다."""
+    return re.sub(r'[\\/*?:"<>|]', '_', name).strip()
+
+
 class CsvChatLogger:
     """채팅 및 후원 내역을 CSV 파일에 실시간으로 누적(Append) 저장하는 클래스입니다."""
 
-    def __init__(self, filepath: str = 'chat.csv') -> None:
+    def __init__(self, filepath: str) -> None:
         self.filepath: str = filepath
         file_exists = os.path.exists(filepath) and os.path.getsize(filepath) > 0
+
+        # 상위 디렉터리 자동 생성
+        dirname = os.path.dirname(filepath)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
 
         # 엑셀 호환을 위해 utf-8-sig 인코딩 사용
         self.file = open(self.filepath, mode='a', newline='', encoding='utf-8-sig')
@@ -61,12 +77,8 @@ class CsvChatLogger:
 
     def close(self) -> None:
         if self.file and not self.file.closed:
+            self.file.flush()
             self.file.close()
-
-
-def _now_str() -> str:
-    """현재 시간을 'YYYY-MM-DD HH:MM:SS' 형식의 문자열로 반환합니다."""
-    return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 
 class ChzzkChat:
@@ -76,13 +88,13 @@ class ChzzkChat:
         streamer: str,
         cookies: dict[str, Any],
         logger: logging.Logger,
-        csv_logger: CsvChatLogger,
+        output_dir: str = 'csv',
         check_interval: int = 20
     ) -> None:
         self.streamer: str = streamer
         self.cookies: dict[str, Any] = cookies
         self.logger: logging.Logger = logger
-        self.csv_logger: CsvChatLogger = csv_logger
+        self.output_dir: str = output_dir
         self.check_interval: int = check_interval
 
         self.sid: str | None = None
@@ -93,6 +105,11 @@ class ChzzkChat:
         self.accessToken: str | None = None
         self.extraToken: str | None = None
 
+        self.current_csv_logger: CsvChatLogger | None = None
+        self.current_csv_path: str | None = None
+
+        # CSV 저장 디렉터리 생성
+        os.makedirs(self.output_dir, exist_ok=True)
         self._init_account_info()
 
     def _init_account_info(self) -> None:
@@ -107,6 +124,36 @@ class ChzzkChat:
         except Exception as e:
             self.logger.warning(f"[{_now_str()}][{self.channelName}] 유저 상태(userIdHash) 조회 실패: {e}")
             self.userIdHash = ""
+
+    def _create_session_csv(self, open_date_str: str, live_title: str) -> None:
+        """새로운 방송 세션마다 고유한 타임스탬프 파일명의 CSV 로거를 생성합니다."""
+        if open_date_str:
+            # 치지직 openDate 포맷: '2026-09-02 16:30:02' -> '20260902_163002'
+            time_tag = open_date_str.replace('-', '').replace(':', '').replace(' ', '_')
+        else:
+            time_tag = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        safe_channel = _sanitize_filename(self.channelName)
+        filename = f"{safe_channel}_{time_tag}.csv"
+        filepath = os.path.join(self.output_dir, filename)
+
+        # 기존 로거가 열려있다면 먼저 닫기
+        self._close_session_csv()
+
+        self.current_csv_logger = CsvChatLogger(filepath)
+        self.current_csv_path = filepath
+        self.logger.info(f"[{_now_str()}][{self.channelName}] 방송 채팅 저장 파일 생성: {filepath}")
+
+    def _close_session_csv(self) -> None:
+        """현재 방송 세션의 CSV 로거를 안전하게 플러시하고 닫습니다."""
+        if self.current_csv_logger:
+            try:
+                self.current_csv_logger.close()
+                self.logger.info(f"[{_now_str()}][{self.channelName}] 방송 세션 종료 - CSV 파일 저장 완료: {self.current_csv_path}")
+            except Exception as e:
+                self.logger.warning(f"[{_now_str()}][{self.channelName}] CSV 파일 닫기 중 오류: {e}")
+            self.current_csv_logger = None
+            self.current_csv_path = None
 
     def connect(self, chat_channel_id: str) -> None:
         self.chatChannelId = chat_channel_id
@@ -198,7 +245,7 @@ class ChzzkChat:
         self.sock.send(json.dumps(dict(send_dict, **default_dict)))
 
     def run(self) -> None:
-        self.logger.info(f"[{_now_str()}][{self.channelName}] 무중단 채팅 수집기를 시작합니다.")
+        self.logger.info(f"[{_now_str()}][{self.channelName}] 무중단 채팅 수집기를 시작합니다. (CSV 저장 폴더: '{self.output_dir}')")
 
         while True:
             try:
@@ -214,6 +261,8 @@ class ChzzkChat:
                 chat_channel_id = live_status.get('chatChannelId')
 
                 if not is_live or not chat_channel_id:
+                    # 방송이 꺼진 경우 기존 세션 CSV 닫기
+                    self._close_session_csv()
                     self.logger.info(
                         f"[{_now_str()}][{self.channelName}] 현재 방송이 꺼져 있습니다 (상태: {live_status.get('status', 'CLOSE')}). "
                         f"{self.check_interval}초 후 방송 시작 여부를 확인합니다..."
@@ -223,7 +272,12 @@ class ChzzkChat:
 
                 # 2. 방송 중인 경우 연결
                 title = live_status.get('liveTitle', '')
-                self.logger.info(f"[{_now_str()}][{self.channelName}] 방송 감지됨 - 제목: '{title}', 채팅 채널 ID: {chat_channel_id}")
+                open_date = live_status.get('openDate', '')
+                self.logger.info(f"[{_now_str()}][{self.channelName}] 방송 감지됨 - 제목: '{title}', 시작시간: '{open_date}', 채팅 채널 ID: {chat_channel_id}")
+
+                # 세션별 CSV 로거 생성 (아직 열려있지 않은 경우)
+                if not self.current_csv_logger:
+                    self._create_session_csv(open_date, title)
 
                 try:
                     self.connect(chat_channel_id)
@@ -236,13 +290,18 @@ class ChzzkChat:
                 # 3. 실시간 수신 루프
                 self._listen_loop()
 
+                # 수신 루프 종료 시 (방종 또는 연결 끊김) CSV 세션 정리
+                self._close_session_csv()
+
             except KeyboardInterrupt:
                 self.logger.info(f"[{_now_str()}] 프로그램 종료 요청을 받았습니다.")
                 self.close_socket()
+                self._close_session_csv()
                 break
             except Exception as e:
                 self.logger.error(f"[{_now_str()}] 예기치 못한 오류 발생: {e}. 5초 후 재시도합니다.")
                 self.close_socket()
+                self._close_session_csv()
                 time.sleep(5)
 
     def _listen_loop(self) -> None:
@@ -293,17 +352,18 @@ class ChzzkChat:
                     # 1. 터미널 및 chat.log 출력
                     self.logger.info(f'[{now_str}][{chat_type}] {nickname} : {msg}')
 
-                    # 2. CSV 파일 누적 저장
-                    self.csv_logger.write_chat(
-                        dt_str=now_str,
-                        timestamp_ms=msg_time_ms,
-                        streamer_id=self.streamer,
-                        channel_name=self.channelName,
-                        chat_type=chat_type,
-                        user_id=user_id,
-                        nickname=nickname,
-                        message=msg
-                    )
+                    # 2. 해당 방송 세션의 CSV 파일에 실시간 저장
+                    if self.current_csv_logger:
+                        self.current_csv_logger.write_chat(
+                            dt_str=now_str,
+                            timestamp_ms=msg_time_ms,
+                            streamer_id=self.streamer,
+                            channel_name=self.channelName,
+                            chat_type=chat_type,
+                            user_id=user_id,
+                            nickname=nickname,
+                            message=msg
+                        )
 
             except KeyboardInterrupt:
                 raise
@@ -312,7 +372,6 @@ class ChzzkChat:
                 break
 
         self.close_socket()
-
 
 
 def get_logger(log_path: str = 'chat.log') -> logging.Logger:
@@ -337,7 +396,7 @@ def load_config(config_path: str = 'config.json') -> dict[str, Any]:
     """설정 파일(config.json)을 로드하며, 파일이 없거나 오류 발생 시 기본값을 반환합니다."""
     default_config: dict[str, Any] = {
         'streamer_id': '9381e7d6816e6d915a44a13c0195b202',
-        'output_csv': 'chat.csv',
+        'output_dir': 'csv',
         'output_log': 'chat.log',
         'check_interval': 20
     }
@@ -372,10 +431,10 @@ if __name__ == '__main__':
         help=f"스트리머 고유 ID (현재 설정값: {config.get('streamer_id')})"
     )
     parser.add_argument(
-        '--output_csv',
+        '--output_dir',
         type=str,
-        default=config.get('output_csv', 'chat.csv'),
-        help=f"저장할 CSV 파일 경로 (현재 설정값: {config.get('output_csv')})"
+        default=config.get('output_dir', config.get('output_csv_dir', 'csv')),
+        help=f"방송별 CSV 파일들이 저장될 폴더 경로 (현재 설정값: {config.get('output_dir', 'csv')})"
     )
     parser.add_argument(
         '--output_log',
@@ -400,19 +459,16 @@ if __name__ == '__main__':
             print(f"[경고] cookies.json 로드 실패: {e}")
 
     logger = get_logger(args.output_log)
-    csv_logger = CsvChatLogger(args.output_csv)
 
-    try:
-        chzzkchat = ChzzkChat(
-            streamer=args.streamer_id,
-            cookies=cookies,
-            logger=logger,
-            csv_logger=csv_logger,
-            check_interval=args.check_interval
-        )
-        chzzkchat.run()
-    finally:
-        csv_logger.close()
+    chzzkchat = ChzzkChat(
+        streamer=args.streamer_id,
+        cookies=cookies,
+        logger=logger,
+        output_dir=args.output_dir,
+        check_interval=args.check_interval
+    )
+    chzzkchat.run()
+
 
 
 

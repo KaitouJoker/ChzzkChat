@@ -33,10 +33,12 @@ def fetch_live_status(streamer: str, cookies: dict[str, Any] | None = None) -> d
             'status': content.get('status', 'CLOSE'),
             'chatChannelId': content.get('chatChannelId'),
             'liveTitle': content.get('liveTitle', ''),
+            'openDate': content.get('openDate', ''),
             'concurrentUserCount': content.get('concurrentUserCount', 0)
         }
     except Exception as e:
         raise e
+
 
 
 def fetch_chatChannelId(streamer: str, cookies: dict[str, Any] | None = None) -> str:
