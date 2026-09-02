@@ -21,6 +21,14 @@ if %ERRORLEVEL% EQU 0 (
     )
 )
 
+:: Git 저장소인 경우 최신 코드 동기화 시도
+where git >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    if exist ".git" (
+        git pull origin main >nul 2>&1
+    )
+)
+
 :: activate.bat 호출 후 echo가 켜지는 현상 방지 및 화면 정리
 @echo off
 cls

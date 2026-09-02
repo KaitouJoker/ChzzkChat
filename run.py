@@ -185,7 +185,7 @@ class ChzzkChat:
         self._heartbeat_thread = None
 
     def _heartbeat_loop(self) -> None:
-        """20초마다 서버로 하트비트 패킷을 전송합니다."""
+        """20초마다 서버로 Ping(cmd: 0) 하트비트 패킷을 전송하여 소켓 연결을 능동적으로 유지합니다."""
         while self._heartbeat_stop_event and not self._heartbeat_stop_event.is_set():
             if self._heartbeat_stop_event.wait(timeout=20):
                 break
@@ -195,11 +195,12 @@ class ChzzkChat:
                     self.sock.send(
                         json.dumps({
                             "ver": "2",
-                            "cmd": CHZZK_CHAT_CMD['pong']  # cmd: 10000 (하트비트 Ping)
+                            "cmd": CHZZK_CHAT_CMD['ping']  # cmd: 0 (Heartbeat Ping)
                         })
                     )
                 except Exception:
                     break
+
 
     def connect(self, chat_channel_id: str) -> None:
         self.chatChannelId = chat_channel_id
