@@ -5,10 +5,9 @@ import json
 import logging
 import os
 import re
-import threading
 import time
 from typing import Any
-from websocket import WebSocket
+from websocket import WebSocket, WebSocketTimeoutException
 
 import api
 from cmd_type import CHZZK_CHAT_CMD
@@ -24,10 +23,10 @@ def _sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', '_', name).strip()
 
 
-def _get_chat_ws_url(chat_channel_id: str) -> str:
-    """chatChannelId 해시를 기반으로 1~9번 채팅 서버 중 적절한 샤드 URL을 계산합니다."""
-    server_idx = (sum(ord(c) for c in chat_channel_id) % 9) + 1
-    return f"wss://kr-ss{server_idx}.chat.naver.com/chat"
+def _get_chat_server_url(chat_channel_id: str) -> str:
+    """chatChannelId 해시를 기반으로 1~9번 채팅 서버 중 적절한 샤드 URL을 반환합니다."""
+    server_num = (sum(ord(c) for c in chat_channel_id) % 9) + 1
+    return f"wss://kr-ss{server_num}.chat.naver.com/chat"
 
 
 class CsvChatLogger:
@@ -90,6 +89,8 @@ class CsvChatLogger:
 
 class ChzzkChat:
 
+    PING_INTERVAL: int = 20  # 하트비트 전송 주기(초)
+
     def __init__(
         self,
         streamer: str,
@@ -114,10 +115,6 @@ class ChzzkChat:
 
         self.current_csv_logger: CsvChatLogger | None = None
         self.current_csv_path: str | None = None
-
-        # 백그라운드 하트비트 스레드 관리
-        self._heartbeat_thread: threading.Thread | None = None
-        self._heartbeat_stop_event: threading.Event | None = None
 
         # CSV 저장 디렉터리 생성
         os.makedirs(self.output_dir, exist_ok=True)
@@ -166,49 +163,23 @@ class ChzzkChat:
             self.current_csv_logger = None
             self.current_csv_path = None
 
-    def _start_heartbeat(self) -> None:
-        """웹소켓 연결 유지를 위해 20초마다 Ping(10000)을 전송하는 백그라운드 스레드를 시작합니다."""
-        self._stop_heartbeat()
-        self._heartbeat_stop_event = threading.Event()
-        self._heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop,
-            name="ChzzkHeartbeatThread",
-            daemon=True
-        )
-        self._heartbeat_thread.start()
-
-    def _stop_heartbeat(self) -> None:
-        """하트비트 스레드를 안전하게 중지합니다."""
-        if self._heartbeat_stop_event:
-            self._heartbeat_stop_event.set()
-            self._heartbeat_stop_event = None
-        self._heartbeat_thread = None
-
-    def _heartbeat_loop(self) -> None:
-        """20초마다 서버로 Ping(cmd: 0) 하트비트 패킷을 전송하여 소켓 연결을 능동적으로 유지합니다."""
-        while self._heartbeat_stop_event and not self._heartbeat_stop_event.is_set():
-            if self._heartbeat_stop_event.wait(timeout=20):
-                break
-
-            if self.sock and self.sock.connected:
-                try:
-                    self.sock.send(
-                        json.dumps({
-                            "ver": "2",
-                            "cmd": CHZZK_CHAT_CMD['ping']  # cmd: 0 (Heartbeat Ping)
-                        })
-                    )
-                except Exception:
-                    break
-
+    def _send_ping(self) -> None:
+        """서버에 Ping(cmd: 0) 하트비트 패킷을 전송하여 웹소켓 연결을 유지합니다."""
+        if self.sock and self.sock.connected:
+            self.sock.send(json.dumps({
+                "ver": "2",
+                "cmd": CHZZK_CHAT_CMD['ping']  # cmd: 0
+            }))
 
     def connect(self, chat_channel_id: str) -> None:
         self.chatChannelId = chat_channel_id
         self.accessToken, self.extraToken = api.fetch_accessToken(self.chatChannelId, self.cookies)
 
-        ws_url = _get_chat_ws_url(self.chatChannelId)
+        ws_url = _get_chat_server_url(self.chatChannelId)
         sock = WebSocket()
         sock.connect(ws_url)
+        # 타임아웃을 설정하여 recv()가 최대 PING_INTERVAL초만 대기하도록 함
+        sock.settimeout(self.PING_INTERVAL)
         self.logger.info(f"[{_now_str()}][{self.channelName}] 채팅 서버 연결 중 ({ws_url})...")
 
         default_dict: dict[str, Any] = {
@@ -247,13 +218,10 @@ class ChzzkChat:
         self.sock = sock
         if self.sock.connected:
             self.logger.info(f"[{_now_str()}][{self.channelName}] 채팅창 연결 완료 (채팅 채널 ID: {self.chatChannelId})")
-            # 연결 성공 시 하트비트 스레드 시작
-            self._start_heartbeat()
         else:
             raise ConnectionError("채팅 서버 연결 실패")
 
     def close_socket(self) -> None:
-        self._stop_heartbeat()
         if self.sock:
             try:
                 self.sock.close()
@@ -356,16 +324,23 @@ class ChzzkChat:
                 time.sleep(5)
 
     def _listen_loop(self) -> None:
+        """메시지 수신 루프. 타임아웃(PING_INTERVAL초) 발생 시 하트비트를 전송하여 연결을 유지합니다."""
         while self.sock and self.sock.connected:
             try:
-                raw_message = self.sock.recv()
+                try:
+                    raw_message = self.sock.recv()
+                except WebSocketTimeoutException:
+                    # PING_INTERVAL초 동안 메시지가 없으면 하트비트 Ping 전송
+                    self._send_ping()
+                    continue
+
                 if not raw_message:
                     break
 
                 raw_message_json: dict[str, Any] = json.loads(raw_message)
                 chat_cmd = raw_message_json.get('cmd')
 
-                # 서버 -> 클라이언트 Ping (0) 요청 시 응답
+                # 서버 Ping(0) 수신 시 즉시 Pong(10000) 응답
                 if chat_cmd == CHZZK_CHAT_CMD['ping']:
                     self.sock.send(
                         json.dumps({
@@ -375,7 +350,7 @@ class ChzzkChat:
                     )
                     continue
 
-                # 클라이언트 -> 서버 Ping에 대한 서버 응답(10000)
+                # 서버 Pong(10000) 응답 수신 시 무시
                 if chat_cmd == CHZZK_CHAT_CMD['pong']:
                     continue
 
@@ -524,8 +499,3 @@ if __name__ == '__main__':
         check_interval=args.check_interval
     )
     chzzkchat.run()
-
-
-
-
-
